@@ -1,3 +1,6 @@
 logs
 .env
 dags/__pycache__/
+cassandra_data
+*.pyc
+__pycache__/

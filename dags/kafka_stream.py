@@ -13,14 +13,56 @@ default_args = {
 }
 
 def stream_data_function():
-    # Placeholder for streaming data logic
-    print("Streaming data...")
-    import requests
     import json
-    response = requests.get('https://randomuser.me/api/')
-    if response.status_code == 200:
-        data = response.json()
-        print("Data received:", data)
+    import requests
+    from kafka import KafkaProducer
+    import time
+    import logging
+
+    # Khởi tạo Kafka Producer (chỉ 1 lần, bên ngoài vòng lặp)
+    try:
+        producer = KafkaProducer(
+            bootstrap_servers=['kafka:9092'],  # broker của Kafka
+            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        )
+        logging.info("Kafka Producer initialized successfully.")
+    except Exception as e:
+        logging.error(f"Failed to initialize Kafka Producer: {e}")
+        return  # Thoát nếu không kết nối được Kafka
+
+    print("🔹 Starting data streaming for 60 seconds...")
+    
+    # Lấy thời gian bắt đầu
+    curr_time = time.time()
+
+    while True:
+        # Điều kiện dừng: Chạy trong 60 giây
+        if time.time() > curr_time + 60:
+            print("🛑 60 seconds elapsed. Stopping stream.")
+            break
+
+        try:
+            # Gọi API
+            response = requests.get('https://randomuser.me/api/')
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                producer.send('user_data', value=data)
+                print("✅ Sent data to Kafka topic: user_data")
+            
+            else:
+                logging.warning(f"Failed to fetch data, status_code={response.status_code}")
+
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
+            
+        time.sleep(1) 
+
+    producer.flush()
+    producer.close()
+    print("🔹 Data streaming finished.")
+
 
 with DAG('user_automation',
          default_args=default_args,
