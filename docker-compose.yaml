@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3.9"
 
 services:
   airflow:
@@ -12,7 +12,9 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
 
-      # ✅ Tự động tạo tài khoản admin
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 300
+      AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: 300
+
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: "admin"
       _AIRFLOW_WWW_USER_PASSWORD: "admin"
@@ -25,16 +27,33 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./spark_stream:/opt/spark/apps
+
     ports:
       - "8080:8080"
+    
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+
     command: >
       bash -c "
       airflow db init &&
       airflow webserver &
       airflow scheduler
       "
+
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+      spark-master:
+        condition: service_started
+      cassandra:
+        condition: service_healthy
+
+    networks:
+      - airflow-net
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.2
@@ -45,6 +64,8 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      - airflow-net
 
   kafka:
     image: confluentinc/cp-kafka:7.5.2
@@ -55,24 +76,41 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
+      # LISTENERS chuẩn nhất cho Docker Desktop
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+
+      KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
     ports:
       - "9092:9092"
+
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/kafka/9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+    networks:
+      - airflow-net
+
   spark-master:
     image: bitnami/spark:latest
     container_name: spark-master
     ports:
-      - "8081:8080"  # Spark Master Web UI (tránh đụng 8080 của Airflow)
-      - "7077:7077"  # Cổng để worker kết nối
+      - "8081:8080"
+      - "7077:7077"
     volumes:
       - ./spark_stream:/opt/spark/apps
     environment:
-      - SPARK_MODE=master
-      - SPARK_UI_PORT=8080 # UI bên trong container vẫn là 8080
+      SPARK_MODE: master
+      SPARK_UI_PORT: 8080
     restart: always
+    networks:
+      - airflow-net
 
   spark-worker:
     image: bitnami/spark:latest
@@ -80,31 +118,55 @@ services:
     depends_on:
       - spark-master
     ports:
-      - "8082:8080" # Spark Worker Web UI (tránh đụng 8080 và 8081)
+      - "8082:8080"
     volumes:
       - ./spark_stream:/opt/spark/apps
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_UI_PORT=8080 # UI bên trong container
-      - SPARK_WORKER_MEMORY=1G
-      - SPARK_WORKER_CORES=1
-    restart: always
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_UI_PORT: 8080
 
-  # ----------------------------------------
-  # 🚀 SERVICE MỚI: CASSANDRA (DATABASE)
-  # ----------------------------------------
+      SPARK_WORKER_MEMORY: 2G
+      SPARK_WORKER_CORES: 2
+
+    restart: always
+    networks:
+      - airflow-net
+
   cassandra:
     image: cassandra:4.1
     container_name: cassandra
+    restart: always
     ports:
-      - "9042:9042" # Cổng cho Spark kết nối
+      - "9042:9042"
+
+    environment:
+      CASSANDRA_CLUSTER_NAME: MyCluster
+      CASSANDRA_DC: MyDC
+      CASSANDRA_RACK: MyRack
+
+      CASSANDRA_SEEDS: cassandra
+
+      MAX_HEAP_SIZE: "1G"
+      HEAP_NEWSIZE: "256M"
+
+      CASSANDRA_START_RPC: "true"
+
     volumes:
       - ./cassandra_data:/var/lib/cassandra
-    environment:
-      - CASSANDRA_CLUSTER_NAME=MyCluster
-      - CASSANDRA_DC=MyDC
-      - CASSANDRA_RACK=MyRack
-    restart: always
+
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+
+    networks:
+      - airflow-net
+
 volumes:
   cassandra_data:
+
+networks:
+  airflow-net:
+    driver: bridge
