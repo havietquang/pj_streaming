@@ -98,7 +98,7 @@ services:
       - airflow-net
 
   spark-master:
-    image: bitnami/spark:latest
+    image: bitnami/spark:3.3.2
     container_name: spark-master
     ports:
       - "8081:8080"
@@ -113,7 +113,7 @@ services:
       - airflow-net
 
   spark-worker:
-    image: bitnami/spark:latest
+    image: bitnami/spark:3.3.2
     container_name: spark-worker
     depends_on:
       - spark-master

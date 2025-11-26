@@ -1,5 +1,5 @@
 
-FROM apache/airflow:2.10.5
+FROM apache/airflow:2.10.3-python3.9
 
 USER root
 RUN apt-get update && \
@@ -17,7 +17,7 @@ ENV PATH="/opt/airflow/.local/bin:${PATH}"
 RUN pip install --no-cache-dir --upgrade \
     apache-airflow-providers-apache-spark \
     apache-airflow-providers-openlineage>=1.8.0 \
-    pyspark==4.0.0 \
+    pyspark==3.3.2 \
     kafka-python \
     cassandra-driver
 
